@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 
@@ -16,6 +17,7 @@ type State struct {
 func (s *State) LocatePath(path string) error {
 	node, err := s.Root.FindPath(path)
 	if err != nil {
+        fmt.Println("Error in LocatePath")
 		return err
 	}
 	s.Cursor = node
