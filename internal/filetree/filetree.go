@@ -160,15 +160,12 @@ func (t *FileTree) FindPath(origPath string) (*FileTree, error) {
 	for _, part := range parts {
 		err := currentNode.maybeLoadChildren()
 		if err != nil {
-            // fmt.Println("No children found")
 			return nil, err
 		}
-        // fmt.Println("part = ", part)
         savedCurrentNode := currentNode
 		currentNode, ok = currentNode.childrenByName[part]
         if !ok {
             for name, child := range savedCurrentNode.childrenByName {
-                // fmt.Println("name = ", name)
                 if strings.HasPrefix(name, part) {
                     currentNode = child
                     ok = true
@@ -177,10 +174,8 @@ func (t *FileTree) FindPath(origPath string) (*FileTree, error) {
             }
         }
 		if !ok {
-            // fmt.Println("Path not found")
 			return nil, PathNotFound{origPath}
 		}
-        // fmt.Println("currentNode: ", currentNode)
 	}
 	return currentNode, nil
 }
