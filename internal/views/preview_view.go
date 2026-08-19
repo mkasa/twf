@@ -3,6 +3,7 @@ package views
 import (
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -15,7 +16,10 @@ type previewView struct {
 	config      *config.TwfConfig
 	state       *state.State
 	lastPath    string
+	lastCols    int
+	lastRows    int
 	lastPreview []string
+	lastRaw     bool
 	scroll      int
 	noLines     int
 }
@@ -45,15 +49,22 @@ func (v *previewView) ShouldRender() bool {
 }
 
 func (v *previewView) Render(p term.Position) []term.Line {
-	if v.lastPath != v.state.Cursor.AbsPath {
+	if v.lastPath != v.state.Cursor.AbsPath || v.lastCols != p.Cols || v.lastRows != p.Rows {
+		if v.lastPath != v.state.Cursor.AbsPath {
+			v.scroll = 0
+		}
 		v.lastPath = v.state.Cursor.AbsPath
-		v.scroll = 0
+		v.lastCols = p.Cols
+		v.lastRows = p.Rows
 
-		preview, err := getPreview(v.config.Preview.PreviewCommand, v.state.Cursor.AbsPath)
+		preview, err := getPreview(v.config.Preview.PreviewCommand, v.state.Cursor.AbsPath, p.Cols, p.Rows)
 		if err != nil {
 			preview = err.Error()
 		}
-		preview = strings.ReplaceAll(preview, "\t", "    ")
+		v.lastRaw = hasGraphicsPrefix(preview)
+		if !v.lastRaw {
+			preview = strings.ReplaceAll(preview, "\t", "    ")
+		}
 		v.lastPreview = strings.Split(preview, "\n")
 	}
 
@@ -69,17 +80,34 @@ func (v *previewView) Render(p term.Position) []term.Line {
 	termLines := []term.Line{}
 	for i := v.scroll; i-v.scroll < p.Rows && i < len(lines); i++ {
 		termLine := term.NewLine(&term.Graphics{}, p.Cols)
-		termLine.AppendRaw(lines[i])
+		if v.lastRaw {
+			termLine.AppendPassthrough(lines[i])
+		} else {
+			termLine.AppendRaw(lines[i])
+		}
 		termLines = append(termLines, termLine)
 	}
 	return termLines
 }
 
-func getPreview(cmdTemplate string, path string) (string, error) {
+// hasGraphicsPrefix reports whether the preview output starts with a terminal
+// graphics escape: kitty graphics (APC G), iTerm2 inline image (OSC 1337), or
+// sixel (DCS). Such output must be passed through without escape filtering.
+func hasGraphicsPrefix(s string) bool {
+	return strings.HasPrefix(s, "\x1b_G") ||
+		strings.HasPrefix(s, "\x1b]1337;") ||
+		strings.HasPrefix(s, "\x1bP")
+}
+
+func getPreview(cmdTemplate string, path string, cols int, rows int) (string, error) {
 	escapedPath := "\"" + strings.ReplaceAll(path, "\"", "\\\"") + "\""
 	cmd := strings.ReplaceAll(cmdTemplate, "{}", escapedPath)
 	var stdout, stderr strings.Builder
 	preview := exec.Command("bash", "-c", cmd)
+	preview.Env = append(os.Environ(),
+		fmt.Sprintf("TWF_PREVIEW_COLUMNS=%d", cols),
+		fmt.Sprintf("TWF_PREVIEW_LINES=%d", rows),
+	)
 	preview.Stdout = &stdout
 	preview.Stderr = &stderr
 	err := preview.Run()
