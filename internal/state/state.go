@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 
@@ -15,10 +16,21 @@ type State struct {
 }
 
 func (s *State) LocatePath(path string) error {
-	node, err := s.Root.FindPath(path)
+	var node *filetree.FileTree
+	var err error
+	if filetree.HasWildcard(path) && !s.existsLiterally(path) {
+		// "A/B/C/*.pdf": show only the matching entries and start on the first.
+		node, err = s.Root.FilterGlob(path)
+	} else {
+		node, err = s.Root.FindPath(path)
+	}
 	if err != nil {
-        fmt.Println("Error in LocatePath")
+		fmt.Println("Error in LocatePath")
 		return err
+	}
+	if !node.Visible() {
+		// The located file is hidden by the filter, which is thus dropped.
+		s.Root.SetFilter("")
 	}
 	s.Cursor = node
 	for node.Parent() != nil {
@@ -29,6 +41,28 @@ func (s *State) LocatePath(path string) error {
 		}
 	}
 	return nil
+}
+
+// SetFilter hides the files not matching the pattern, replacing any earlier
+// filter. The cursor moves up to its directory if it got hidden.
+func (s *State) SetFilter(pattern string) error {
+	if err := s.Root.SetFilter(pattern); err != nil {
+		return err
+	}
+	for !s.Cursor.Visible() {
+		s.Cursor = s.Cursor.Parent()
+	}
+	return nil
+}
+
+// existsLiterally reports whether the path names an existing file as is, so
+// that files with names like "foo[1].pdf" are not treated as patterns.
+func (s *State) existsLiterally(path string) bool {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(s.Root.AbsPath, path)
+	}
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 func (s *State) AutoExpand(maxDepth int, ignore *regexp.Regexp) error {

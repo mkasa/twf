@@ -122,6 +122,7 @@ func defaultKeybindings() Keybindings {
 		(&term.Event{term.Rune, 'p'}).HashKey():      []string{"tree:parent"},
 		(&term.Event{term.Rune, 'P'}).HashKey():      []string{"tree:parent", "tree:close"},
 		(&term.Event{term.Rune, '/'}).HashKey():      []string{"tree:locateExternal"},
+		(&term.Event{Symbol: term.CtrlF}).HashKey():  []string{"filter:edit"},
 		(&term.Event{term.Rune, 'q'}).HashKey():      []string{"quit"},
 		(&term.Event{Symbol: term.CtrlC}).HashKey():  []string{"quit"},
 		(&term.Event{Symbol: term.Escape}).HashKey(): []string{"quit"},

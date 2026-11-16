@@ -56,6 +56,77 @@ func TestFindPath(t *testing.T) {
 	assert.Equal(t, root, node)
 }
 
+func childNames(t *testing.T, tree *FileTree) []string {
+	children, err := tree.Children(ByTypeAndName)
+	assert.Nil(t, err)
+	names := []string{}
+	for _, child := range children {
+		names = append(names, child.Name())
+	}
+	return names
+}
+
+func TestFilterGlob(t *testing.T) {
+	root, err := InitFileTree("testdata")
+	assert.Nil(t, err)
+	node, err := root.FilterGlob("dir1/[a-c]")
+	assert.Nil(t, err)
+	assert.Equal(t, "b", node.Name())
+	assert.Equal(t, []string{"b"}, childNames(t, node.Parent()))
+	assert.True(t, node.Parent().Expanded())
+	// Siblings of literal components stay visible.
+	assert.Equal(t, []string{"dir1", "dir2", "a"}, childNames(t, root))
+
+	root, err = InitFileTree("testdata")
+	assert.Nil(t, err)
+	node, err = root.FilterGlob("dir*/c")
+	assert.Nil(t, err)
+	assert.Equal(t, "c", node.Name())
+	assert.Equal(t, []string{"dir2"}, childNames(t, root))
+
+	root, err = InitFileTree("testdata")
+	assert.Nil(t, err)
+	_, err = root.FilterGlob("dir1/*.pdf")
+	assert.IsType(t, PathNotFound{}, err)
+	assert.Equal(t, []string{"b"}, childNames(t, root.childrenByName["dir1"]))
+
+	_, err = root.FilterGlob("dir1/[")
+	assert.NotNil(t, err)
+}
+
+func TestSetFilter(t *testing.T) {
+	root, err := InitFileTree("testdata")
+	assert.Nil(t, err)
+	assert.Nil(t, root.Expand())
+	dir1 := root.childrenByName["dir1"]
+	assert.Nil(t, dir1.Expand())
+	b := dir1.childrenByName["b"]
+
+	assert.Nil(t, root.SetFilter("[ac]"))
+	assert.Equal(t, []string{"dir1", "dir2", "a"}, childNames(t, root))
+	assert.Equal(t, []string{}, childNames(t, dir1))
+	assert.False(t, b.Visible())
+	assert.True(t, dir1.Visible())
+
+	// A new filter replaces the previous one.
+	assert.Nil(t, root.SetFilter("b"))
+	assert.Equal(t, []string{"dir1", "dir2"}, childNames(t, root))
+	assert.Equal(t, []string{"b"}, childNames(t, dir1))
+
+	assert.NotNil(t, root.SetFilter("["))
+	assert.Equal(t, "b", root.Filter())
+
+	assert.Nil(t, root.SetFilter(""))
+	assert.Equal(t, []string{"dir1", "dir2", "a"}, childNames(t, root))
+
+	// It also replaces the restriction of FilterGlob.
+	_, err = root.FilterGlob("dir*/c")
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"dir2"}, childNames(t, root))
+	assert.Nil(t, root.SetFilter("*"))
+	assert.Equal(t, []string{"dir1", "dir2", "a"}, childNames(t, root))
+}
+
 func TestTraverse(t *testing.T) {
 	names := []string{}
 	root, err := InitFileTree("testdata")

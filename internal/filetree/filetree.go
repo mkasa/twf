@@ -17,6 +17,16 @@ type FileTree struct {
 	children       []*FileTree
 	childrenByName map[string]*FileTree
 	expanded       bool
+	filter         *filter
+	only           map[*FileTree]bool
+}
+
+// filter is the view filter shared by all nodes of a tree.
+type filter struct {
+	// Files not matching the pattern are hidden. Empty shows everything.
+	pattern string
+	// Directories restricted to a subset of their children by FilterGlob.
+	restricted []*FileTree
 }
 
 func InitFileTree(p string) (*FileTree, error) {
@@ -36,6 +46,7 @@ func InitFileTree(p string) (*FileTree, error) {
 	tree := &FileTree{
 		AbsPath: abs,
 		info:    info,
+		filter:  &filter{},
 	}
 	return tree, nil
 }
@@ -96,6 +107,7 @@ func (t *FileTree) maybeLoadChildren() error {
 			AbsPath: filepath.Join(t.AbsPath, content.Name()),
 			info:    content,
 			parent:  t,
+			filter:  t.filter,
 		}
 		if content.Mode()&os.ModeSymlink != 0 {
 			if targetInfo, err := os.Stat(childFileTree.AbsPath); err == nil {
@@ -126,11 +138,66 @@ func (t *FileTree) Children(order Order) ([]*FileTree, error) {
 	if err != nil {
 		return nil, err
 	}
-	children := append(t.children[:0:0], t.children...)
+	children := t.children[:0:0]
+	for _, child := range t.children {
+		if t.shows(child) {
+			children = append(children, child)
+		}
+	}
 	if order != nil {
 		sort.Slice(children, order(children))
 	}
 	return children, nil
+}
+
+// matchesFilter reports whether a file name passes the filter pattern. A
+// pattern without wildcards matches any name containing it.
+func matchesFilter(pattern string, name string) bool {
+	if !HasWildcard(pattern) {
+		return strings.Contains(name, pattern)
+	}
+	ok, _ := filepath.Match(pattern, name)
+	return ok
+}
+
+func (t *FileTree) shows(child *FileTree) bool {
+	if t.only != nil && !t.only[child] {
+		return false
+	}
+	if t.filter.pattern != "" && !child.IsDir() {
+		return matchesFilter(t.filter.pattern, child.Name())
+	}
+	return true
+}
+
+// Visible reports whether the node is not hidden by the current filter.
+func (t *FileTree) Visible() bool {
+	for node := t; node.parent != nil; node = node.parent {
+		if !node.parent.shows(node) {
+			return false
+		}
+	}
+	return true
+}
+
+// Filter returns the pattern set by SetFilter.
+func (t *FileTree) Filter() string {
+	return t.filter.pattern
+}
+
+// SetFilter hides all files in the tree whose name does not match the
+// pattern. Directories stay visible. It replaces any earlier filter,
+// including the one set by FilterGlob. An empty pattern shows everything.
+func (t *FileTree) SetFilter(pattern string) error {
+	if _, err := filepath.Match(pattern, ""); err != nil {
+		return fmt.Errorf("Invalid pattern %q", pattern)
+	}
+	for _, node := range t.filter.restricted {
+		node.only = nil
+	}
+	t.filter.restricted = nil
+	t.filter.pattern = pattern
+	return nil
 }
 
 type PathNotFound struct {
@@ -178,6 +245,105 @@ func (t *FileTree) FindPath(origPath string) (*FileTree, error) {
 		}
 	}
 	return currentNode, nil
+}
+
+// HasWildcard reports whether the path contains glob metacharacters.
+func HasWildcard(path string) bool {
+	return strings.ContainsAny(path, "*?[")
+}
+
+// FilterGlob restricts the tree to the entries matching the glob pattern and
+// returns the first match in display order. Only directories that are matched
+// against a wildcard component are filtered; siblings of literal components
+// stay visible. The tree is left untouched if nothing matches.
+func (t *FileTree) FilterGlob(pattern string) (*FileTree, error) {
+	var err error
+	path := filepath.Clean(pattern)
+	if filepath.IsAbs(path) {
+		path, err = filepath.Rel(t.AbsPath, path)
+		if err != nil {
+			return nil, PathNotFound{pattern}
+		}
+	}
+	parts := []string{}
+	for base := filepath.Base(path); base != "." && base != string(filepath.Separator); base = filepath.Base(path) {
+		path = filepath.Dir(path)
+		parts = append([]string{base}, parts...)
+	}
+	for _, part := range parts {
+		if _, err := filepath.Match(part, ""); err != nil {
+			return nil, fmt.Errorf("Invalid pattern %q: %w", pattern, err)
+		}
+	}
+	node, err := t.filterGlob(parts)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, PathNotFound{pattern}
+	}
+	return node, nil
+}
+
+func (t *FileTree) filterGlob(parts []string) (*FileTree, error) {
+	if len(parts) == 0 {
+		return t, nil
+	}
+	if err := t.maybeLoadChildren(); err != nil {
+		return nil, err
+	}
+	part := parts[0]
+	if part == ".." {
+		if t.parent == nil {
+			return nil, nil
+		}
+		return t.parent.filterGlob(parts[1:])
+	}
+	if !HasWildcard(part) {
+		child, ok := t.childrenByName[part]
+		if !ok {
+			return nil, nil
+		}
+		return child.filterGlob(parts[1:])
+	}
+
+	candidates := append(t.children[:0:0], t.children...)
+	sort.Slice(candidates, ByTypeAndName(candidates))
+	var first *FileTree
+	kept := []*FileTree{}
+	for _, child := range candidates {
+		name := child.Name()
+		// Like the shell, do not match hidden files unless asked for.
+		if strings.HasPrefix(name, ".") && !strings.HasPrefix(part, ".") {
+			continue
+		}
+		if ok, _ := filepath.Match(part, name); !ok {
+			continue
+		}
+		match, err := child.filterGlob(parts[1:])
+		if err != nil {
+			return nil, err
+		}
+		if match == nil {
+			continue
+		}
+		if first == nil {
+			first = match
+		}
+		kept = append(kept, child)
+	}
+	if first == nil {
+		return nil, nil
+	}
+	if t.only == nil {
+		t.filter.restricted = append(t.filter.restricted, t)
+	}
+	t.only = map[*FileTree]bool{}
+	for _, child := range kept {
+		t.only[child] = true
+	}
+	t.expanded = true
+	return first, nil
 }
 
 func (t *FileTree) Traverse(visibleOnly bool, order Order, f func(*FileTree, int) error) error {

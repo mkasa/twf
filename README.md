@@ -123,12 +123,20 @@ It is also possible to locate and highlight a file given as an argument.
 twf path/to/subdir/file
 ```
 
+If the argument contains a wildcard (`*`, `?` or `[...]`), only the matching entries are shown and the cursor starts on the first match.
+Quote the pattern so that the shell does not expand it.
+
+```sh
+twf 'path/to/subdir/*.pdf'
+```
+
 ### Default keybindings
 
 - `j`: Move down.
 - `k`: Move up.
 - `ctrl-j`: Move preview down.
 - `ctrl-k`: Move preview up.
+- `ctrl-f`: Type a filter such as `*.pdf` to hide all files that do not match. Press again to change it; an empty filter shows everything.
 - `p`: Move to parent.
 - `P`: Move to parent and collapse.
 - `o`: Expand/collapse directory.

@@ -8,6 +8,13 @@ type View interface {
 	GetCommands() map[string]Command
 }
 
+// EventCapturer can be implemented by views that need raw input, such as a
+// text prompt. Events for which CaptureEvent returns true are not looked up
+// in the keybindings.
+type EventCapturer interface {
+	CaptureEvent(Event) bool
+}
+
 type Command func(helper TerminalHelper, args ...interface{}) error
 
 type TerminalHelper interface {

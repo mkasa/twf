@@ -217,6 +217,17 @@ func (t *Terminal) StartLoop(bindings map[string][]string, views []View) (err er
 			zap.L().Debug("Rerendered.")
 		case event := <-events:
 			zap.L().Sugar().Debug("Event: ", event)
+			captured := false
+			for _, view := range views {
+				if capturer, ok := view.(EventCapturer); ok && capturer.CaptureEvent(event) {
+					captured = true
+					break
+				}
+			}
+			if captured {
+				t.render(views)
+				continue
+			}
 			cmdKeys, ok := bindings[event.HashKey()]
 			zap.L().Sugar().Debug("Cmds: ", cmdKeys)
 			if !ok {
