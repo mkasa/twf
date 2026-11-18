@@ -72,22 +72,40 @@ func TestFilterGlob(t *testing.T) {
 	node, err := root.FilterGlob("dir1/[a-c]")
 	assert.Nil(t, err)
 	assert.Equal(t, "b", node.Name())
+	assert.Equal(t, "[a-c]", root.Filter())
 	assert.Equal(t, []string{"b"}, childNames(t, node.Parent()))
 	assert.True(t, node.Parent().Expanded())
-	// Siblings of literal components stay visible.
 	assert.Equal(t, []string{"dir1", "dir2", "a"}, childNames(t, root))
 
+	// Like SetFilter, the last component hides files in the whole tree.
+	root, err = InitFileTree("testdata")
+	assert.Nil(t, err)
+	node, err = root.FilterGlob("dir1/b*")
+	assert.Nil(t, err)
+	assert.Equal(t, "b", node.Name())
+	assert.Equal(t, "b*", root.Filter())
+	assert.Equal(t, []string{"dir1", "dir2"}, childNames(t, root))
+	assert.Equal(t, []string{}, childNames(t, root.childrenByName["dir2"]))
+
+	// Wildcards in directory components restrict those directories.
 	root, err = InitFileTree("testdata")
 	assert.Nil(t, err)
 	node, err = root.FilterGlob("dir*/c")
 	assert.Nil(t, err)
 	assert.Equal(t, "c", node.Name())
+	assert.Equal(t, "", root.Filter())
 	assert.Equal(t, []string{"dir2"}, childNames(t, root))
 
-	root, err = InitFileTree("testdata")
+	// A new pattern replaces the previous one.
+	node, err = root.FilterGlob("dir1/*")
 	assert.Nil(t, err)
+	assert.Equal(t, "b", node.Name())
+	assert.Equal(t, []string{"dir1", "dir2", "a"}, childNames(t, root))
+
+	// Nothing matches: the tree is left untouched.
 	_, err = root.FilterGlob("dir1/*.pdf")
 	assert.IsType(t, PathNotFound{}, err)
+	assert.Equal(t, "*", root.Filter())
 	assert.Equal(t, []string{"b"}, childNames(t, root.childrenByName["dir1"]))
 
 	_, err = root.FilterGlob("dir1/[")

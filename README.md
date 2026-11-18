@@ -124,6 +124,7 @@ twf path/to/subdir/file
 ```
 
 If the argument contains a wildcard (`*`, `?` or `[...]`), only the matching entries are shown and the cursor starts on the first match.
+A wildcard in the file name is applied as the `ctrl-f` filter, so `*.pdf` below hides every file that does not match it throughout the tree, and `ctrl-f` can change or clear it.
 Quote the pattern so that the shell does not expand it.
 
 ```sh

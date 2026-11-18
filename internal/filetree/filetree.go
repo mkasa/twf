@@ -252,10 +252,12 @@ func HasWildcard(path string) bool {
 	return strings.ContainsAny(path, "*?[")
 }
 
-// FilterGlob restricts the tree to the entries matching the glob pattern and
-// returns the first match in display order. Only directories that are matched
-// against a wildcard component are filtered; siblings of literal components
-// stay visible. The tree is left untouched if nothing matches.
+// FilterGlob shows only the entries matching the glob pattern and returns the
+// first match in display order. It replaces any earlier filter, as SetFilter
+// does. A wildcard in the last component becomes the filter pattern, which
+// hides the non-matching files in the whole tree just like SetFilter, while
+// directories matched against an earlier wildcard component are restricted to
+// the matching children. The tree is left untouched if nothing matches.
 func (t *FileTree) FilterGlob(pattern string) (*FileTree, error) {
 	var err error
 	path := filepath.Clean(pattern)
@@ -275,17 +277,42 @@ func (t *FileTree) FilterGlob(pattern string) (*FileTree, error) {
 			return nil, fmt.Errorf("Invalid pattern %q: %w", pattern, err)
 		}
 	}
-	node, err := t.filterGlob(parts)
+	m := &globMatch{only: map[*FileTree]map[*FileTree]bool{}}
+	node, err := t.filterGlob(parts, m)
 	if err != nil {
 		return nil, err
 	}
 	if node == nil {
 		return nil, PathNotFound{pattern}
 	}
+
+	filterPattern := ""
+	if len(parts) > 0 && HasWildcard(parts[len(parts)-1]) {
+		filterPattern = parts[len(parts)-1]
+	}
+	if err := t.SetFilter(filterPattern); err != nil {
+		return nil, err
+	}
+	for dir, only := range m.only {
+		dir.only = only
+		t.filter.restricted = append(t.filter.restricted, dir)
+	}
+	for _, dir := range m.expand {
+		dir.expanded = true
+	}
 	return node, nil
 }
 
-func (t *FileTree) filterGlob(parts []string) (*FileTree, error) {
+// globMatch collects the changes to apply once FilterGlob found a match.
+type globMatch struct {
+	// Children to keep in directories matched against a wildcard component
+	// other than the last one.
+	only map[*FileTree]map[*FileTree]bool
+	// Directories containing matches, to be expanded.
+	expand []*FileTree
+}
+
+func (t *FileTree) filterGlob(parts []string, m *globMatch) (*FileTree, error) {
 	if len(parts) == 0 {
 		return t, nil
 	}
@@ -297,20 +324,20 @@ func (t *FileTree) filterGlob(parts []string) (*FileTree, error) {
 		if t.parent == nil {
 			return nil, nil
 		}
-		return t.parent.filterGlob(parts[1:])
+		return t.parent.filterGlob(parts[1:], m)
 	}
 	if !HasWildcard(part) {
 		child, ok := t.childrenByName[part]
 		if !ok {
 			return nil, nil
 		}
-		return child.filterGlob(parts[1:])
+		return child.filterGlob(parts[1:], m)
 	}
 
 	candidates := append(t.children[:0:0], t.children...)
 	sort.Slice(candidates, ByTypeAndName(candidates))
 	var first *FileTree
-	kept := []*FileTree{}
+	kept := map[*FileTree]bool{}
 	for _, child := range candidates {
 		name := child.Name()
 		// Like the shell, do not match hidden files unless asked for.
@@ -320,7 +347,7 @@ func (t *FileTree) filterGlob(parts []string) (*FileTree, error) {
 		if ok, _ := filepath.Match(part, name); !ok {
 			continue
 		}
-		match, err := child.filterGlob(parts[1:])
+		match, err := child.filterGlob(parts[1:], m)
 		if err != nil {
 			return nil, err
 		}
@@ -330,19 +357,16 @@ func (t *FileTree) filterGlob(parts []string) (*FileTree, error) {
 		if first == nil {
 			first = match
 		}
-		kept = append(kept, child)
+		kept[child] = true
 	}
 	if first == nil {
 		return nil, nil
 	}
-	if t.only == nil {
-		t.filter.restricted = append(t.filter.restricted, t)
+	if len(parts) > 1 {
+		// The last component is applied as the filter pattern instead.
+		m.only[t] = kept
 	}
-	t.only = map[*FileTree]bool{}
-	for _, child := range kept {
-		t.only[child] = true
-	}
-	t.expanded = true
+	m.expand = append(m.expand, t)
 	return first, nil
 }
 
